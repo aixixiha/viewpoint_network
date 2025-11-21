@@ -1,0 +1,105 @@
+from vllm import LLM, SamplingParams
+import json, pandas as pd
+from pathlib import Path
+
+pro_path = "/home/sduu39/zHongchang/"
+model_path = pro_path + "model1"
+data_path = pro_path + "data/"
+output_file = data_path + "v4_107view.jsonl"
+input_file = data_path + "v4output.json"
+
+llm = LLM(model=model_path, dtype="float16", tensor_parallel_size=2, gpu_memory_utilization=0.8)  # 自动用两张4090
+
+params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=768)
+
+def build_prompt(abstract):
+    return f"""
+You are required to act as an AI annotator and extract the Viewpoints embedded in the sentences of the provided academic paper abstract. Below, you will be given an abstract from an academic paper. You need to break it down sentence by sentence and extract the Viewpoints embedded in each sentence. The extracted Viewpoints can be an idea, argument, or fact. Each sentence may contain one or more Viewpoints to be extracted. The extracted Viewpoints should be as granular as possible to ensure they cannot be further broken down.
+
+When extracting Viewpoints from a sentence, pay attention to the context within the abstract. Replace pronouns with the nouns they represent and complete any omitted sentence components to ensure the independence of the Viewpoints is not compromised. This means that each extracted Viewpoint should not contain pronouns whose referents cannot be found within that Viewpoint.
+
+Do not extract any viewpoints that describe the limitations or defects of previous methods or approaches.Also, avoid extracting viewpoints related to the experimental content of this paper, such as specific experiments, benchmarking, performance evaluations, or the release of code, data, or model weights (including URLs).
+
+Below is an example interaction that can serve as a reference for format and method of extracting Viewpoints:
+
+System’s Input:
+[The Start of Abstract]x`
+State-of-the-art computer vision systems are trained to predict a fixed set of predetermined object categories. This restricted form of supervision limits their generality and usability since additional labeled data is needed to specify any other visual concept. Learning directly from raw text about images is a promising alternative which leverages a much broader source of supervision. We demonstrate that the simple pre-training task of predicting which caption goes with which image is an efficient and scalable way to learn SOTA image representations from scratch on a dataset of 400 million (image, text) pairs collected from the internet. After pre-training, natural language is used to reference learned visual concepts (or describe new ones) enabling zero-shot transfer of the model to downstream tasks. We study the performance of this approach by benchmarking on over 30 different existing computer vision datasets, spanning tasks such as OCR, action recognition in videos, geo-localization, and many types of fine-grained object classification. The model transfers non-trivially to most tasks and is often competitive with a fully supervised baseline without the need for any dataset specific training. For instance, we match the accuracy of the original ResNet-50 on ImageNet zero-shot without needing to use any of the 1.28 million training examples it was trained on. We release our code and pre-trained model weights at [this https URL](https://github.com/OpenAI/CLIP).
+[The End of Abstract]
+
+Your Answer:
+[Sentence 1]
+State-of-the-art computer vision systems are trained to predict a fixed set of predetermined object categories.
+[Extracted Viewpoints in Sentence 1]
+[State-of-the-art computer vision systems are trained to predict a fixed set of predetermined object categories.]
+[Sentence 2] 
+This restricted form of supervision limits their generality and usability since additional labeled data is needed to specify any other visual concept.
+[Extracted Viewpoints in Sentence 2]
+[The generality and usability of state-of-the-art computer vision systems are limited by being trained to predict a fixed set of predetermined object categories.]
+[Additional labeled data is needed to specify visual concepts that are not included in the fixed set of predetermined object categories.]
+[Sentence 3]
+Learning directly from raw text about images is a promising alternative which leverages a much broader source of supervision.
+[Extracted Viewpoints in Sentence 3]
+[Learning directly from raw text about images is a promising alternative to learning to predict a fixed set of predetermined object categories.]
+[Learning directly from raw text about images leverages a much broader source of supervision than learning to predict a fixed set of predetermined object categories.]
+[Sentence 4]
+We demonstrate that the simple pre-training task of predicting which caption goes with which image is an efficient and scalable way to learn SOTA image representations from scratch on a dataset of 400 million (image, text) pairs collected from the internet.
+[Extracted Viewpoints in Sentence 4]
+[The pre-training task of predicting which caption goes with which image on a dataset of millions of (image, text) pairs collected from the internet is simple.]
+[The pre-training task of predicting which caption goes with which image on a dataset of millions of (image, text) pairs collected from the internet is efficient.]
+[The pre-training task of predicting which caption goes with which image on a dataset of millions of (image, text) pairs collected from the internet is scalable.]
+[The pre-training task of predicting which caption goes with which image can used to learn SOTA image representations from scratch on a dataset of 400 million (image, text) pairs collected from the internet.]
+[Sentence 5]
+After pre-training, natural language is used to reference learned visual concepts (or describe new ones) enabling zero-shot transfer of the model to downstream tasks.
+[Extracted Viewpoints in Sentence 5]
+[After pre-training on a dataset of millions of (image, text) pairs collected from the internet to predict which caption corresponds to which image, our method uses natural language to reference learned visual concepts or describe new ones.]
+[Using natural language to reference learned visual concepts or describe new ones enables zero-shot transfer of our proposed model to downstream tasks.]
+[Sentence 6]
+We study the performance of this approach by benchmarking on over 30 different existing computer vision datasets, spanning tasks such as OCR, action recognition in videos, geo-localization, and many types of fine-grained object classification.
+[Extracted Viewpoints in Sentence 6]
+[The performance of our method was evaluated by benchmarking on over 30 different existing computer vision datasets, spanning tasks such as OCR, action recognition in videos, geo-localization, and many types of fine-grained object classification.]
+[Sentence 7]
+The model transfers non-trivially to most tasks and is often competitive with a fully supervised baseline without the need for any dataset specific training.
+[Extracted Viewpoints in Sentence 7]
+[Our proposed model transfers non-trivially to most tasks across over 30 different existing computer vision datasets, spanning tasks such as OCR, action recognition in videos, geo-localization, and many types of fine-grained object classification.]
+[Our proposed model is often competitive with a fully supervised baseline without the need for any dataset specific training.]
+[Sentence 8]
+For instance, we match the accuracy of the original ResNet-50 on ImageNet zero-shot without needing to use any of the 1.28 million training examples it was trained on.
+[Extracted Viewpoints in Sentence 8]
+[Our proposed model matches the accuracy of the original ResNet-50 on ImageNet zero-shot without needing to use any training examples it was trained on.] 
+[The original ResNet-50 on ImageNet was trained on 1.28 million training examples.] 
+[Sentence 9]
+We release our code and pre-trained model weights at [this https URL](https://github.com/OpenAI/CLIP).
+[Extracted Viewpoints in Sentence 9]
+[Our code and pre-trained model weights are released.]
+
+Below is a abstract you need to process:
+[The Start of Abstract]{abstract}[The end of Abstract]
+"""
+
+prompts, records = [], []
+chunk_size = 50
+batch_size = 64
+processed = 0
+
+with open(output_file, "w", encoding="utf-8") as f_out:
+    reader = pd.read_json(input_file, lines=True, chunksize=chunk_size)
+
+    for chunk in reader:
+        for _, row in chunk.iterrows():
+            if pd.isna(row["abstract"]): continue
+            prompt = build_prompt(row["abstract"])
+            prompts.append(prompt)
+            records.append(row.to_dict())
+
+            if len(prompts) >= batch_size:
+                outputs = llm.generate(prompts, params)
+                for prm, out, rec in zip(prompts, outputs, records):
+                    rec["viewpoints"] = out.outputs[0].text.strip()
+                    f_out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+                prompts, records = [], []
+                processed += batch_size
+                print(f"已处理 {processed} 条")
+
+print(f"✅ 已处理 {processed} 条，结果保存在 {output_file}")
